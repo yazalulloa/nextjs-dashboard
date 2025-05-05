@@ -1,8 +1,12 @@
 'use server';
+
 import {z} from 'zod';
-import { revalidatePath } from 'next/cache';
-import { redirect } from 'next/navigation';
+import {revalidatePath} from 'next/cache';
+import {redirect} from 'next/navigation';
 import postgres from 'postgres';
+
+import {signIn} from '@/auth';
+import {AuthError} from 'next-auth';
 
 const sql = postgres(process.env.POSTGRES_URL!, {ssl: 'require'});
 
@@ -13,7 +17,7 @@ const FormSchema = z.object({
   }),
   amount: z.coerce
   .number()
-  .gt(0, { message: 'Please enter an amount greater than $0.' }),
+  .gt(0, {message: 'Please enter an amount greater than $0.'}),
   status: z.enum(['pending', 'paid'], {
     invalid_type_error: 'Please select an invoice status.',
   }),
@@ -49,7 +53,7 @@ export async function createInvoice(prevState: State, formData: FormData) {
   }
 
   // Prepare data for insertion into the database
-  const { customerId, amount, status } = validatedFields.data;
+  const {customerId, amount, status} = validatedFields.data;
   const amountInCents = amount * 100;
   const date = new Date().toISOString().split('T')[0];
 
@@ -72,7 +76,7 @@ export async function createInvoice(prevState: State, formData: FormData) {
   redirect('/dashboard/invoices');
 }
 
-const UpdateInvoice = FormSchema.omit({ id: true, date: true });
+const UpdateInvoice = FormSchema.omit({id: true, date: true});
 
 export async function updateInvoice(id: string, prevState: State, formData: FormData) {
   const validatedFields = UpdateInvoice.safeParse({
@@ -89,15 +93,17 @@ export async function updateInvoice(id: string, prevState: State, formData: Form
   }
 
 
-  const { customerId, amount, status } = validatedFields.data;
+  const {customerId, amount, status} = validatedFields.data;
   const amountInCents = amount * 100;
 
   try {
     await sql`
         UPDATE invoices
-        SET customer_id = ${customerId}, amount = ${amountInCents}, status = ${status}
+        SET customer_id = ${customerId},
+            amount      = ${amountInCents},
+            status      = ${status}
         WHERE id = ${id}
-      `;
+    `;
   } catch (error) {
     // We'll log the error to the console for now
     console.error(error);
@@ -111,6 +117,27 @@ export async function updateInvoice(id: string, prevState: State, formData: Form
 }
 
 export async function deleteInvoice(id: string) {
-  await sql`DELETE FROM invoices WHERE id = ${id}`;
+  await sql`DELETE
+            FROM invoices
+            WHERE id = ${id}`;
   revalidatePath('/dashboard/invoices');
+}
+
+export async function authenticate(
+    prevState: string | undefined,
+    formData: FormData,
+) {
+  try {
+    await signIn('credentials', formData);
+  } catch (error) {
+    if (error instanceof AuthError) {
+      switch (error.type) {
+        case 'CredentialsSignin':
+          return 'Invalid credentials.';
+        default:
+          return 'Something went wrong.';
+      }
+    }
+    throw error;
+  }
 }
